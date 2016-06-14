@@ -1,111 +1,180 @@
-/*jslint node: true */
-var oauth = require('oauth');
-var streaming = require('streaming');
-var logger = require('loge');
-var xml2js = require('xml2js');
+/*
+Copyright 2013 Google Inc. All Rights Reserved.
 
-var json = require('./json');
-var request = require('./request');
-// var response = require('./response');
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-// requestFactory uses these urls, but this hash is also attached to the requestFactory
-// so that the user can change them if needed.
-var oauth_endpoints = {
-  request: 'https://www.flickr.com/services/oauth/request_token',
-  authorize: 'https://www.flickr.com/services/oauth/authorize',
-  access: 'https://www.flickr.com/services/oauth/access_token',
-};
+  http://www.apache.org/licenses/LICENSE-2.0
 
-var parseResponse = function(res, callback) {
-  /** parseResponse: coalesce a Flickr API response string into a consolidated, consistent javascript object.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
-  Flickr doesn't always respond with JSON.
-    1. It returns a querystring when there are (OAuth) errors.
-    2. It returns xml for 'upload' and 'replace' requests.
+(function() {
+  var GOOGLE_PLUS_SCRIPT_URL = 'https://apis.google.com/js/client:plusone.js';
+  var CHANNELS_SERVICE_URL = 'https://www.googleapis.com/youtube/v3/channels';
+  var VIDEOS_UPLOAD_SERVICE_URL = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet';
+  var VIDEOS_SERVICE_URL = 'https://www.googleapis.com/youtube/v3/videos';
+  var INITIAL_STATUS_POLLING_INTERVAL_MS = 15 * 1000;
 
-  For example, an async upload response:
+  var accessToken;
 
-      <?xml version="1.0" encoding="utf-8" ?>
-      <rsp stat="ok">\n<ticketid>8412916-19001238788141232</ticketid>\n</rsp>
+  window.oauth2Callback = function(authResult) {
+    if (authResult['access_token']) {
+      accessToken = authResult['access_token'];
 
-  or a normal upload:
+      $.ajax({
+        url: CHANNELS_SERVICE_URL,
+        method: 'GET',
+        headers: {
+          Authorization: 'Bearer ' + accessToken
+        },
+        data: {
+          part: 'snippet',
+          mine: true
+        }
+      }).done(function(response) {
+        $('#channel-name').text(response.items[0].snippet.title);
+        $('#channel-thumbnail').attr('src', response.items[0].snippet.thumbnails.default.url);
 
-      <photoid>1234</photoid>
-
-  or a replace:
-
-      <photoid secret="abcdef" originalsecret="abcdef">1234</photoid>
-
-  callback signature: function(err, response_object)
-  */
-  res.setEncoding('utf8');
-  streaming.readToEnd(res, function(err, chunks) {
-    if (err) return callback(err);
-
-    var body = chunks.join('');
-    // logger.debug('response res.headers', res.headers);
-
-    if (res.headers['content-type'].match(/text\/xml/)) {
-      xml2js.parseString(body, {explicitRoot: false, explicitArray: true}, function(err, doc) {
-        callback(err, doc);
+        $('.pre-sign-in').hide();
+        $('.post-sign-in').show();
       });
     }
-    else if (res.headers['content-type'].match(/application\/json/)) {
-      json.parseAsync(body, callback);
-    }
-    else {
-      setImmediate(function() {
-        callback(new Error('Invalid response format. ' + body));
+  };
+
+  function initiateUpload(e) {
+    e.preventDefault();
+
+    var file = $('#file').get(0).files[0];
+    if (file) {
+      $('#submit').attr('disabled', true);
+
+      var metadata = {
+        snippet: {
+          title: $('#title').val(),
+          description: $('#description').val(),
+          categoryId: 22
+        }
+      };
+
+      $.ajax({
+        url: VIDEOS_UPLOAD_SERVICE_URL,
+        method: 'POST',
+        contentType: 'application/json',
+        headers: {
+          Authorization: 'Bearer ' + accessToken,
+          'x-upload-content-length': file.size,
+          'x-upload-content-type': file.type
+        },
+        data: JSON.stringify(metadata)
+      }).done(function(data, textStatus, jqXHR) {
+        resumableUpload({
+          url: jqXHR.getResponseHeader('Location'),
+          file: file,
+          start: 0
+        });
       });
     }
-  });
-};
+  }
 
-var requestFactory = function(consumer_key, consumer_secret, oauth_token, oauth_token_secret) {
-  /** set up a request factory, creating a closure of variables so that we can
-  create multiple requests without unncessary re-initialization. */
-  var oauth_client = new oauth.OAuth(
-    oauth_endpoints.request, oauth_endpoints.access,
-    consumer_key, consumer_secret, '1.0', null, 'HMAC-SHA1');
-  return function(opts, callback) {
-    // callback signature: function(err, response_object)
-    // opts.api_key = consumer_key;
-    // logger.debug('Flickr API: %j', opts);
-    request(opts, oauth_client, oauth_token, oauth_token_secret, function(err, res) {
-      if (err) return callback(err);
+  function resumableUpload(options) {
+    var ajax = $.ajax({
+      url: options.url,
+      method: 'PUT',
+      contentType: options.file.type,
+      headers: {
+        'Content-Range': 'bytes ' + options.start + '-' + (options.file.size - 1) + '/' + options.file.size
+      },
+      xhr: function() {
+        // Thanks to http://stackoverflow.com/a/8758614/385997
+        var xhr = $.ajaxSettings.xhr();
 
-      // parseResponse handles the varying response format the Flickr API may decide to send
-      parseResponse(res, function(err, result) {
-        if (err) return callback(err);
+        if (xhr.upload) {
+          xhr.upload.addEventListener(
+            'progress',
+            function(e) {
+              if(e.lengthComputable) {
+                var bytesTransferred = e.loaded;
+                var totalBytes = e.total;
+                var percentage = Math.round(100 * bytesTransferred / totalBytes);
 
-        // var resStr = util.inspect(res, {showHidden: true, depth: 5});
-        // logger.debug('Flickr request: %j; Flickr response: %j', opts, result);
+                $('#upload-progress').attr({
+                  value: bytesTransferred,
+                  max: totalBytes
+                });
 
-        if (result.$.stat != 'ok') {
-          var custom_err = new Error('stat != ok in Flickr API response');
-          logger.debug('Flickr failure response: %j', result, res.headers);
-          return callback(custom_err);
+                $('#percent-transferred').text(percentage);
+                $('#bytes-transferred').text(bytesTransferred);
+                $('#total-bytes').text(totalBytes);
+
+                $('.during-upload').show();
+              }
+            },
+            false
+          );
         }
 
-        callback(null, result);
-      });
+        return xhr;
+      },
+      processData: false,
+      data: options.file
     });
-  };
-};
 
-requestFactory.fromFilepath = function(credentials_filepath, callback) {
-  /** Create Flickr client from the credentials stored (in JSON format) in the specified filepath.
-  Returns client request closure */
-  json.readFile(credentials_filepath, function(err, credentials) {
-    if (err) return callback(err);
-    var request = requestFactory(
-      credentials.consumer_key,
-      credentials.consumer_secret,
-      credentials.oauth_token,
-      credentials.oauth_token_secret);
-    callback(null, request);
+    ajax.done(function(response) {
+      var videoId = response.id;
+      $('#video-id').text(videoId);
+      $('.post-upload').show();
+      checkVideoStatus(videoId, INITIAL_STATUS_POLLING_INTERVAL_MS);
+    });
+
+    ajax.fail(function() {
+      $('#submit').click(function() {
+        alert('Not yet implemented!');
+      });
+      $('#submit').val('Resume Upload');
+      $('#submit').attr('disabled', false);
+    });
+  }
+
+  function checkVideoStatus(videoId, waitForNextPoll) {
+    $.ajax({
+      url: VIDEOS_SERVICE_URL,
+      method: 'GET',
+      headers: {
+        Authorization: 'Bearer ' + accessToken
+      },
+      data: {
+        part: 'status,processingDetails,player',
+        id: videoId
+      }
+    }).done(function(response) {
+      var processingStatus = response.items[0].processingDetails.processingStatus;
+      var uploadStatus = response.items[0].status.uploadStatus;
+
+      $('#post-upload-status').append('<li>Processing status: ' + processingStatus + ', upload status: ' + uploadStatus + '</li>');
+
+      if (processingStatus == 'processing') {
+        setTimeout(function() {
+          checkVideoStatus(videoId, waitForNextPoll * 2);
+        }, waitForNextPoll);
+      } else {
+        if (uploadStatus == 'processed') {
+          $('#player').append(response.items[0].player.embedHtml);
+        }
+
+        $('#post-upload-status').append('<li>Final status.</li>');
+      }
+    });
+  }
+
+  $(function() {
+    $.getScript(GOOGLE_PLUS_SCRIPT_URL);
+
+    $('#upload-form').submit(initiateUpload);
   });
-};
-
-requestFactory.oauth_endpoints = oauth_endpoints;
-module.exports = requestFactory;
+})();

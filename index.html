@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+  <head>
+  
+  <style>
+  	#channel-thumbnail{
+  		float:left;
+  	}
+  	
+  	input[type="submit"]{
+  		height:30px;
+  		width:230px;
+  	}
+  </style>
+    <meta charset="utf-8">
+    <title>YouTube API Uploads via CORS</title>
+    <link rel="stylesheet" href="index.css">
+  </head>
+  <body bgcolor="#FFDF9B">
+<fieldset>
+<center>
+    <span id="signinButton" class="pre-sign-in">
+      <span
+          class="g-signin"
+          data-callback="oauth2Callback"
+          data-clientid="325497399727-farhavlkaks90bl96lr0t4m985kraq75.apps.googleusercontent.com"
+          data-cookiepolicy="single_host_origin"
+          data-scope="https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload">
+      </span>
+    </span>
+
+    <div class="post-sign-in">
+      <div>
+        <img id="channel-thumbnail" height="200px" width="200px">
+        <label class="label">user name:</label><span id="channel-name"></span>
+      </div>
+
+      <form id="upload-form">
+        <div>
+          <input id="title" type="text" placeholder="Default Title">
+        </div>
+        <div>
+          <textarea id="description" placeholder="Default description"></textarea>
+        </div>
+        <div>
+          <input id="file" type="file">
+          <input id="submit" type="submit" value="Upload">
+        </div>
+        
+      </form>
+
+      <div class="during-upload">
+        <p><span id="percent-transferred"></span>% done (<span id="bytes-transferred"></span>/<span id="total-bytes"></span> bytes)</p>
+        <progress id="upload-progress" max="1" value="0"></progress>
+      </div>
+
+      <div class="post-upload">
+        <p>Uploaded video with id <span id="video-id"></span>. Polling for status...</p>
+        <ul id="post-upload-status"></ul>
+        <div id="player"></div>
+      </div>
+    </div>
+
+    <script src="//ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+    <script src="index.js"></script>
+  
+  </center>
+  </fieldset>
+  </body>
+</html>
